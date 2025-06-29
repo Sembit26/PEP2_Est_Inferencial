@@ -1,0 +1,260 @@
+---
+title: "EP11"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(ggpubr)
+library(car)
+library(leaps)
+library(caret)
+
+
+#Cargar Datos
+set.seed(21130)
+
+datos <- read.csv("EP09 Datos.csv", header = TRUE, sep = ";")
+
+datos <- datos %>%
+  mutate(across(everything(), ~ as.numeric(gsub(",", ".", .))))
+
+# Calcular IMC
+datos$IMC <- datos$Weight / ((datos$Height/100) ^2)
+
+datos$EN <- ifelse(datos$IMC >= 23.2, "sobrepeso", "no sobrepeso")
+
+```
+
+```{r}
+# Separar por estado nutricional
+sobrepeso <- datos %>% filter(EN == "sobrepeso")
+no_sobrepeso <- datos %>% filter(EN == "no sobrepeso")
+
+# Muestrear 50 de cada grupo para total 100
+muestra_sobrepeso <- sample_n(sobrepeso, 50)
+muestra_no_sobrepeso <- sample_n(no_sobrepeso, 50)
+
+muestra_100 <- bind_rows(muestra_sobrepeso, muestra_no_sobrepeso)
+muestra_100 <- muestra_100[sample(nrow(muestra_100)), ]
+
+
+# Verificar balance
+table(muestra_100$EN)
+```
+# Pregunta 3
+```{r}
+datos_modelo <- muestra_100 %>%
+  select(-Weight, -IMC, -EN, -Height)  # Eliminamos variables a excluir
+
+predictores_posibles <- colnames(datos_modelo)
+
+combinaciones <- regsubsets(Weight ~ ., data = muestra_100[,c(predictores_posibles, "Weight")], nvmax = 8, method = "exhaustive")
+plot(combinaciones)
+
+predictores_seleccionados <- summary(combinaciones)$which[which.max(summary(combinaciones)$adjr2), ]
+predictores_seleccionados <- names(predictores_seleccionados[predictores_seleccionados == TRUE])
+predictores_seleccionados <- setdiff(predictores_seleccionados, c("(Intercept)", "Weight"))
+
+print(predictores_seleccionados)
+
+muestra_rlm <- muestra_100[, c(predictores_seleccionados, "Weight")]
+
+modelo_rlm <- lm(Weight ~ ., data = muestra_rlm)
+```
+
+```{r}
+set.seed(21130)
+
+modelo_cv <- train(
+  Weight ~ .,
+  data = muestra_rlm,
+  method = "lm",
+  trControl = trainControl(method = "boot", number = 50)
+)
+
+```
+
+```{r, echo= FALSE}
+# Mostrar resumen del modelo final ajustado con todos los datos
+cat("Resumen del modelo final:\n")
+print(summary(modelo_cv$finalModel))
+
+# Mostrar errores en cada pliegue
+cat("\nErrores en cada pliegue:\n")
+print(modelo_cv$resample)
+
+# Mostrar error promedio estimado para el modelo (RMSE promedio y desviación)
+cat("\nError estimado para el modelo:\n")
+print(modelo_cv$results)
+```
+# Pregunta 4
+```{r}
+set.seed(21130)
+
+control_rfe <- rfeControl(
+  functions = lmFuncs,
+  method = "repeatedcv",
+  number = 5,
+  repeats = 5,
+  verbose = FALSE
+)
+
+rfe_result <- rfe(
+  x = datos_modelo,
+  y = muestra_100$IMC,
+  sizes = c(10:20),
+  rfeControl = control_rfe,
+  metric = "Rsquared"
+)
+
+predictores_imc <- predictors(rfe_result)
+
+modelo_final <- lm(
+  formula = as.formula(paste("IMC ~", paste(predictores_imc, collapse = " + "))),
+  data = muestra_100
+)
+
+summary(modelo_final)
+```
+
+
+# Pregunta 5
+```{r}
+set.seed(21130)
+
+
+datos_modelo_3 <- muestra_100 %>%
+  select(-Weight, -IMC, -Height) %>%
+  mutate(EN = factor(EN, levels = c("no sobrepeso", "sobrepeso")))
+
+
+control_rfe <- rfeControl(
+  functions = lrFuncs,
+  method = "LOOCV",
+  verbose = FALSE,
+  returnResamp = "final"
+)
+
+names(datos_modelo_3 %>% select(-EN))
+
+
+rfe_RLogitM <- rfe(
+  x = datos_modelo_3 %>% select(-EN),
+  y = datos_modelo_3$EN,
+  sizes = 2:6,
+  rfeControl = control_rfe,
+  metric = "ROC"
+)
+
+
+
+print(rfe_RLogitM)
+predictores_log <- predictors(rfe_RLogitM)
+print(predictores_log)
+```
+
+```{r}  
+modelo_final <- glm(
+  formula = as.formula(paste("EN ~", paste(predictores_log, collapse = " + "))),
+  data = datos_modelo_3,
+  family = binomial()
+)
+
+
+summary(modelo_final)
+vif(modelo_final)
+
+```
+
+
+
+
+```{r}
+# Paso 1: Preparar datos
+# -----------------------
+# Eliminar variables que no se usarán como predictores
+rlogitm_df <- muestra_100 %>%
+  select(-Weight, -IMC, -Height)
+
+# Asegurarse que EN sea un factor binario con niveles adecuados
+rlogitm_df$EN <- factor(rlogitm_df$EN, levels = c("no sobrepeso", "sobrepeso"))
+
+# Nombre de la variable respuesta binaria
+respuesta_binaria <- "EN"
+
+# Fórmula de regresión logística para RFE
+rlogitm_fmla <- formula(paste(respuesta_binaria, ".", sep = " ~ "))
+
+# Paso 2: Configurar funciones para RFE y entrenamiento
+# -----------------------------------------------------
+# Usar twoClassSummary para ROC y probabilidades
+lrFuncs[["summary"]] <- twoClassSummary
+
+rlogitm_rfe_control <- rfeControl(
+  functions = lrFuncs,
+  method = "LOOCV",
+  saveDetails = TRUE,
+  returnResamp = "all",
+  verbose = FALSE
+)
+
+rlogitm_train_control <- trainControl(
+  method = "none",
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+
+# Paso 3: Ejecutar RFE
+# ---------------------
+set.seed(21130)
+
+rlogitm_rfe <- suppressWarnings(
+  rfe(
+    rlogitm_fmla,
+    data = rlogitm_df,
+    sizes = 2:6,  # o ajusta según el número real de predictores
+    metric = "ROC",
+    rfeControl = rlogitm_rfe_control,
+    trControl = rlogitm_train_control
+  )
+)
+
+# Paso 4: Extraer y mostrar el modelo final
+# -----------------------------------------
+rlogitm <- rlogitm_rfe[["fit"]]
+
+cat("Modelo de RLogitM obtenido con RFE:\n")
+summary(rlogitm)
+
+plot(rlogitm_rfe)
+
+
+```
+```{r}
+vif(rlogitm)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

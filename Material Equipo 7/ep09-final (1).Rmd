@@ -1,0 +1,549 @@
+---
+title: "EP09"
+author: "GRUPO 7"
+date: "2025-06-02"
+output: html_document
+---
+
+# Librerías usadas
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggpubr)
+library(car)
+library(caret)
+```
+
+
+
+# Preguntas
+
+1. Definir la semilla a utilizar, que corresponde a los últimos cuatro dígitos del RUN (sin considerar el dígito verificador) del integrante de menor edad del equipo.
+
+2. Seleccionar una muestra aleatoria de 100 mujeres (si la semilla es un número par) o 100 hombres (si la semilla es impar), y separar 70 casos para trabajar en la construcción de modelos y 30 para su evaluación en datos no vistos.
+
+3. Seleccionar de forma aleatoria ocho posibles variables predictoras.
+
+4. Seleccionar, de las otras variables, una que el equipo considere que podría ser útil para predecir la variable Peso (sin considerar la estatura), justificando bien esta selección.
+
+5. Usando el entorno R y paquetes estándares1, construir un modelo de regresión lineal simple con el predictor seleccionado en el paso anterior.
+
+6. Usando herramientas estándares1 para la exploración de modelos del entorno R, buscar entre dos y cinco predictores de entre las variables seleccionadas al azar en el punto 3, para agregar al modelo de regresión lineal simple obtenido en el paso 5.
+
+7. Evaluar la bondad de ajuste (incluyendo el análisis de casos atípicos y casos influyentes) y la generalidad (condiciones para RLM) de los modelos y “arreglarlos” en caso de que presenten algún problema.
+
+8. Evaluar el poder predictivo del modelo con los datos no utilizados para construirlo.
+
+
+Para dar respuesta a estas preguntas, inicialmente se cargan los datos y se realiza una limpieza básica, eliminando filas con valores NA y convirtiendo las columnas a tipo numérico. Luego, se selecciona una muestra de 100 hombres de forma aleatoria, tomando 70 observaciones como el conjunto de entrenamiento y 30 observaciones como el conjunto de prueba. A partir de ahí, se construyen modelos de regresión lineal simple y múltiple.
+
+```{r}
+
+set.seed(5113)
+datos <- read.csv("EP09 Datos.csv", header = TRUE, sep = ";")
+
+# Convertir todas las columnas a numérico (eliminar comas, si hay)
+datos <- datos %>%
+  mutate(across(everything(), ~ as.numeric(gsub(",", ".", .))))
+
+# Filtrar por gender == 1
+datos_hombres <- subset(datos, Gender == 1)
+
+# Eliminar filas con cualquier NA
+datos_hombres_limpios <- na.omit(datos_hombres)
+# Alternativamente: datos_hombres %>% drop_na()
+
+# Tomar muestra de 100 observaciones
+muestra <- sample_n(datos_hombres_limpios, 100)
+
+# Dividir en muestra70 y restante
+muestra70 <- sample_n(muestra, 70)
+restante <- anti_join(muestra, muestra70)
+
+```
+
+
+A continuación se seleccionan aleatoriamente 8 variables para ser usados como posibles predictores de los modelos de regresión lineal que se quieren generar.
+
+```{r}
+# Excluir Gender y Weight para seleccionar predictores
+posibles_predictores <- setdiff(names(muestra), c("Gender", "Weight"))
+predictores_seleccionados <- sample(posibles_predictores, 8)
+predictores_seleccionados
+
+completo<- lm(Weight ~ ., data = muestra70[, c("Weight","Thigh.Girth", predictores_seleccionados)])
+```
+# REGRESION LINEAL SIMPLE
+
+Se solicita generar un modelo RLS a partir de una variable útil para predecir la variable de salida "Weight". En este caso, se selecciona "Thigh.Girth" (grosor del muslo) como predictor, puesto que hay estudios que demuestran como el grosor del muslo puede ser un buen indicador del peso corporal (Morphological analysis of the human lower extremity based on relative muscle weight, 2025). Junto con esta investigación, se aplicará la función de correlación entre "Weight" y "Thigh.Girth" para verificar la relación entre estas dos variables:
+
+
+```{r}
+
+correlacion<-cor(muestra70$Thigh.Girth, muestra70$Weight)
+cat("\n\n Correlación entre Muslo y Peso;\n")
+print(correlacion)
+
+modelo_RLS <- lm(Weight ~ Thigh.Girth, data = muestra70)
+summary(modelo_RLS)
+
+cat("\n\n Gráfico para modelo de regresión lineal simple\n")
+g <- ggscatter(muestra70, x = "Thigh.Girth", y = "Weight",
+                color = "steelblue", fill = "steelblue",
+                add = "reg.line", add.params = list(color = "gray"))
+print(g)
+```
+
+Además, aplicando la función de correlación entre Weight y Thight.Girth, se observa que existe una correlación fuerte y positiva.
+
+El Multiple R-squared es de 0.607, lo que indica que el modelo explica aproximadamente el 60.7% de la variabilidad en el peso en función del grosor del muslo. Por otro lado, el gráfico de dispersión muestra aparentemente una relación lineal positiva entre estas dos variables.
+
+
+A continuación, se evaluará la generalidad del modelo RLS, verificando las condiciones de normalidad, homocedasticidad e independencia de los residuos, así como la presencia de valores atípicos e influyentes.
+
+Empezando por los gráficos de residuos y marginalidad, se obtuvo lo siguiente:
+```{r}
+residualPlots(modelo_RLS)
+
+marginalModelPlots(modelo_RLS, sd = TRUE,
+                   id = list(method = "r", n = 3, cex = 0.7, location = "lr"),
+                   col = "steelblue", pch = 20,
+                   col.line = c("steelblue", "red"))
+
+```
+
+Luego, al observar el gráfico de residuos no se identifica algún patrón y los residuos parecen repartirse de forma aleatoria alrededor de la línea horizontal. Además, la prueba de curvatura resultó no significativa por lo que no podemos descartar que el peso se relaciona linealmente con el grosor del muslo.
+
+En los gráficos de marginalidad se observa una buena concordancia entre el modelo y los datos observados. En ambos paneles, la línea del modelo sigue de cerca la tendencia real de los datos, lo que indica un ajuste adecuado. Sin embargo, se observan ligeras desviaciones en los extremos, lo que sugiere una posible relación no completamente lineal. 
+
+
+Para evaluar normalidad de los residuos, se utiliza el gráfico Q-Q y la prueba de Shapiro-Wilk:
+```{r}
+residuos <- residuals(modelo_RLS)
+
+qqnorm(residuos)
+qqline(residuos, col = "red", lwd = 2)
+
+shapiro.test(modelo_RLS$residuals)
+```
+
+Vemos que los residuos siguen una distribución normal, ya que el p-valor del test de Shapiro-Wilk es mayor a 0.05. Asimismo, al observar el gráfico, se identifica que los residuos se distribuyen de manera normal, ya que los puntos se alinean a lo largo de la línea diagonal.
+
+
+Para evaluar la independencia de los residuos y homnocedasticidad de estos, se utilizan los test de Durbin-Watson y NCV respectivamente:
+
+- Test de Independencia de residuos (Durbin-Watson):
+```{r}
+#test Independencia
+durbinWatsonTest(modelo_RLS)
+```
+- Test de Homocedasticidad de residuos (NCV):
+```{r}
+#test homocedasticidad
+ncvTest(modelo_RLS) 
+
+```
+
+Para de test de independencia, se observa que el p valor es mayor a 0.05, por lo que no se rechaza la hipótesis nula de independencia de residuos. Por otro lado, el test de homocedasticidad también indica que no se rechaza la hipótesis nula de homocedasticidad de los residuos, ya que dicho test resulta no significativo.
+
+
+Finalmente para este modelo se evalúa la presencia de valores atípicos e influyentes, utilizando el gráfico de influencia:
+
+```{r}
+influencePlot(modelo_RLS, id = list(cex = 0.7))
+```
+
+Luego de realizar el gráfico de influencia de valores atípicos, se identificaron seis observaciones que podrían estar influyendo en el modelo ajustado. Para evaluar si estas observaciones presentan algún efecto de apalancamiento, se utilizó el gráfico de componentes más residuos parciales (crPlots), el cual permite observar la relación parcial entre la variable dependiente y el predictor, así como posibles patrones no lineales o puntos influyentes:
+
+```{r}
+crPlots(modelo_RLS,
+        ylim = c(-50, 50),
+        col = "steelblue",
+        pch = 20,
+        col.lines = c("red", "steelblue"),
+        smooth = list(smoother = loessLine, span = 1),
+        id = list(method = "r", n = 8, cex = 0.7, location = "lr"))
+```
+
+Al observar el gráfico inicial, no se identifican patrones claros que sugieran un efecto de apalancamiento evidente. Sin embargo, se decidió evaluar el impacto específico de una de las observaciones influyentes detectadas anteriormente, la cual es la observación 20, por lo que se elimina del modelo anterior para ver si su eliminación afecta significativamente el modelo.
+
+```{r}
+
+# Eliminar la observación número 20
+muestra70_sin20 <- muestra70[-20, ]
+modelo_sin20 <- lm(Weight ~ Thigh.Girth, data = muestra70_sin20)
+
+# Gráfico de Componentes + Residuos Parciales
+crPlots(modelo_sin20,
+        ylim = c(-50, 50),
+        col = "steelblue",
+        pch = 20,
+        col.lines = c("red", "steelblue"),
+        smooth = list(smoother = loessLine, span = 1),
+        id = list(method = "r", n = 8, cex = 0.7, location = "lr"))
+```
+
+Al eliminar dicha observación, se observa que el comportamiento general del modelo no cambia significativamente y tampoco se evidencia un patrón de apalancamiento relevante. Esto sugiere que, si bien la observación 20 tenía cierta influencia (según el gráfico de Cook’s Distance), el sacar esta observación del modelo, no altera al mismo.
+
+## Conclusión del modelo RLS
+
+En conclusión, el modelo RLS resulta ser confiable, ya que cumple con los supuestos para un modelo confiable, los cuales son que los residuos se distribuyen de manera aproximadamente aleatoria, son independientes, presentan homocedasticidad y siguen una distribución normal. Además, aunque se identificaron algunas observaciones con posible influencia en el modelo, la exclusión de una de ellas no generó cambios significativos en la estructura del modelo. Por lo tanto, se puede afirmar que el modelo RLS es robusto y adecuado para predecir el peso en función del grosor del muslo.
+
+
+# REGRESION LINEAL MULTIPLE
+
+Pasando del modelo RLS a uno RLM, se utilizará el método de paso a paso hacia atrás:
+
+```{r}
+paso<- drop1(completo, test = "F")
+print(paso,digits = 3,signif.legend = FALSE)
+
+modelo_rlm1<- update(completo, . ~ . - Waist.Girth)
+
+paso<- drop1(modelo_rlm1, test = "F")
+print(paso,digits = 3,signif.legend = FALSE)
+
+modelo_rlm2<- update(modelo_rlm1, . ~ . - Biacromial.diameter)
+
+paso<- drop1(modelo_rlm2, test = "F")
+print(paso,digits = 3,signif.legend = FALSE)
+
+modelo_rlm3 <- update(modelo_rlm2, . ~ . - Chest.Girth)
+
+paso<- drop1(modelo_rlm3, test = "F")
+print(paso,digits = 3,signif.legend = FALSE)
+
+modelo_rlm4<- update(modelo_rlm3, . ~ . - Wrists.diameter)
+
+paso<- drop1(modelo_rlm4, test = "F")
+print(paso,digits = 3,signif.legend = FALSE)
+
+modelo_rlm5 <- update(modelo_rlm4, . ~ . - Hip.Girth)
+
+paso<- drop1(modelo_rlm5, test = "F")
+print(paso,digits = 3,signif.legend = FALSE)
+```
+
+```{r, echo=FALSE}
+cat("\n-------------------------------------------\n")
+# Mostrar AIC y BIC de los modelos
+cat("Modelo 1: AIC =", AIC(modelo_rlm1), "\n")
+cat("Modelo 2: AIC =", AIC(modelo_rlm2), "\n")
+cat("Modelo 3: AIC =", AIC(modelo_rlm3), "\n")
+cat("Modelo 4: AIC =", AIC(modelo_rlm4), "\n")
+cat("Modelo 5: AIC =", AIC(modelo_rlm5), "\n\n")
+
+cat("Modelo 1: BIC =", BIC(modelo_rlm1), "\n")
+cat("Modelo 2: BIC =", BIC(modelo_rlm2), "\n")
+cat("Modelo 3: BIC =", BIC(modelo_rlm3), "\n")
+cat("Modelo 4: BIC =", BIC(modelo_rlm4), "\n")
+cat("Modelo 5: BIC =", BIC(modelo_rlm5), "\n\n")
+```
+
+```{r}
+modelo_RLM<-modelo_rlm4
+modelo_nulo<- lm(Weight ~ 1, data = muestra70)
+```
+
+```{r, echo=FALSE}
+cat("\n------------- Modelo RLM -----------\n")
+summary(modelo_RLM)
+```
+
+Para elegir el modelo más adecuado, se observa el p-valor de cada variable y se tomó en cuenta el predictor con mayor p valor para eliminarlo en cada paso. Además, se compararon los modelos utilizando AIC y BIC, donde a medida que se eliminan predictores del modelo, el AIC y BIC disminuyen hasta cierto punto, donde después, cuando el modelo tiene menos variables, se le toma más peso a BIC, por lo que nos fijamos en el modelo que tuvo menor BIC. Por otro lado, el Multiple R-squared es de 0.9208, lo que indica que el modelo explica aproximadamente el 92.08% de la variabilidad en el peso en función de los predictores seleccionados.
+
+A continuación, se realiza una comparación entre el modelo nulo, modelo RLS y el modelo RLM para evaluar si este último es significativo:
+```{r}
+comparación<- anova(modelo_nulo, modelo_RLS,modelo_RLM)
+print(comparación)
+```
+
+El análisis de varianza (ANOVA) muestra que el modelo RLM es significativamente mejor que el modelo nulo y también mejor que el modelo RLS, ya que los valores de p son menores a 0.05, lo que indica que al menos uno de los modelos es significativamente diferente del otro. Aparte el RSS del modelo RLM es menor que el del modelo RLS, lo que indica que el modelo RLM tiene un mejor ajuste a los datos.
+
+A continuación, al igual que con el modelo RLS, se evaluará la generalidad del modelo RLM, verificando las condiciones de normalidad, homocedasticidad e independencia de los residuos, así como la presencia de valores atípicos e influyentes, añadiendose el test de multicolinealidad (VIF).
+
+Para el gráfico de residuos y marginalidad, se obtuvo lo siguiente:
+
+Gráfico de residuos:
+```{r}
+residualPlots(
+  modelo_RLM,
+  type = "rstandard",
+  id = list(method = "r", n = 3, cex = 0.7, location = "lr"),
+  col = "steelblue",
+  pch = 20,
+  col.quad = "red"
+)
+
+```
+
+Los gráficos de residuos estandarizados frente a cada predictor y a los valores ajustados muestran un patrón mayormente aleatorio alrededor de cero, lo cual es deseable. No obstante, algunas curvas rojas (líneas de suavizado) muestran ligeras curvaturas, especialmente en Hip.Girth, lo que sugiere una leve no linealidad. No obstante, este modelo se seguirá considerando como adecuado para el análisis, ya que la mayoría de los residuos se distribuyen aleatoriamente y no hay patrones evidentes que sugieran problemas graves de ajuste.
+
+
+Grpafico marginal:
+```{r}
+marginalModelPlots(
+  modelo_RLM,
+  terms = ~ Thigh.Girth + Chest.depth + Hip.Girth + Elbows.diameter + Chest.diameter,
+  sd = TRUE,
+  id = list(method = "r", n = 3, cex = 0.7, location = "lr"),
+  col = "steelblue",
+  pch = 20,
+  col.line = c("steelblue", "red")
+)
+
+```
+
+En general, los resultados muestran una relación positiva y aproximadamente lineal entre las variables predictoras y la variable dependiente. Las líneas de predicción del modelo (en rojo) siguen de manera adecuada la tendencia de los datos observados (puntos azules), lo cual, sugiere un buen ajuste marginal. Las bandas de confianza estrechas y las distribuciones de los boxplots alineadas con las predicciones refuerzan esta conclusión. Además, el gráfico de los valores ajustados (Fitted values) indica que el modelo captura correctamente la variación de la respuesta, mostrando un comportamiento lineal consistente y sin desviaciones sistemáticas apreciables.
+
+A continuación, se evalúa la normalidad de los residuos utilizando el gráfico Q-Q y la prueba de Shapiro-Wilk:
+
+```{r}
+residuos2 <- residuals(modelo_RLM)
+
+qqnorm(residuos2)
+qqline(residuos2, col = "red", lwd = 2)
+
+shapiro.test(modelo_RLM$residuals)
+```
+
+Como resultado, se observa que los residuos siguen una distribución normal, ya que el p-valor del test de Shapiro-Wilk es mayor a 0.05. Además, al observar el gráfico Q-Q, se identifica que los residuos se distribuyen de manera aproximadamente normal, ya que los puntos se alinean a lo largo de la línea diagonal.
+
+Para evaluar la homocedasticidad de los residuos y la independencia de los mismo, se utilizará los test de NCV y Durbin-Watson.
+
+
+Test homocedasticidad:
+```{r}
+# También con los valores ajustados
+ncvTest(modelo_RLM, ~ fitted(modelo_RLM))
+
+```
+
+Test de independencia de residuos (Durbin-Watson):
+```{r}
+durbinWatsonTest(modelo_RLM)
+```
+
+El test de homocedasticidad arrojó un p-valor de 0.5419, por lo que no se rechaza la hipótesis nula de homocedasticidad, concluyéndose que los residuos presentan varianza constante. Por otro lado, el test de Durbin-Watson entregó un estadístico de 2.104 y un p-valor de 0.652, lo que indica que no existe evidencia de autocorrelación en los errores. Por lo tanto, ambos resultados respaldan la validez del modelo estudiado.
+
+Para verificar la condición de multicolinealidad, se utiliza el factor de inflación de la varianza (VIF) para cada predictor del modelo RLM, donde un VIF entre 1 y 5 indica una presencia moderada de multicolinealidad, mientras que un VIF mayor a 5 indica una alta multicolinealidad. Si el VIF es mayor a 10, se considera que hay un problema grave de multicolinealidad.
+
+```{r}
+vif(modelo_RLM)
+```
+
+Los valores de VIF para los predictores Thigh.Girth, Chest.depth, Elbows.diameter, Chest.diameter se encuentran entre 1 y 5, lo que indica una presencia moderada de multicolinealidad, pero al analizar el valor de VIF para Hip.Girth, que es 5.2, se considera que la multicolinealidad es preocupante.
+
+Es por lo anterior que se decidió eliminar la variable Hip.Girth del modelo, ya que su VIF es mayor a 5, lo que indica una alta multicolinealidad con los otros predictores.
+```{r}
+modelo_RLM2 <- update(modelo_RLM, . ~ . - Hip.Girth)
+vif(modelo_RLM2)
+```
+
+Al eliminar dicha variable, se observa que el VIF para cada uno de los predictores restantes se encuentra entre 1 y 5, lo que indica que la multicolinealidad ya no es un problema significativo en el modelo, si no más bien moderada.
+
+Finalmente para este modelo se evalúa la presencia de valores atípicos e influyentes, utilizando el gráfico de influencia:
+
+Gráfico de influencia de valores atípicos:
+```{r}
+# Gráfico de influencia (residuos estudentizados, leverage y distancia de Cook)
+influencePlot(modelo_RLM2, 
+              id = list(method = "r", n = 3), 
+              main = "Influence Plot del modelo final")
+
+```
+
+Analizando el gráfico obtenido no se observan patrones claros de apalancamiento o influencia excesiva de algunas observaciones, ya que no existe ninguna observacion con una distancia Cook´s cercano a 1, cumpliendo satisfactoriamente con esta condición.
+
+## Conclusión del modelo RLM
+
+Según los resultados, el modelo RLM obtenido puede ser considerado confiable, puesto que el modelo ha cumplido con las condiciones necesarias, y en casos donde no fue posible cumplir con alguna condición, se realizaron ajustes necesarios para corregirlo. Por lo tanto, el modelo RLM se considera adecuado para proseguir con la evaluación de su poder predictivo.
+
+
+## Calidad Predictiva de los modelos
+```{r}
+set.seed(5113)
+opt = options(warn = 1)
+fmla <- formula("Weight ~ Thigh.Girth")
+
+# Validación cruzada por pliegues con los 70 datos de entrenamiento
+entrenamiento_rls <- train(fmla, data = muestra70, method = "lm",
+                       trControl = trainControl(method = "cv", number = 10))
+modelo_final_rls <- entrenamiento_rls[["finalModel"]]
+```
+
+```{r, echo=FALSE}
+cat("\nError estimado para el modelo:\n")
+print(entrenamiento_rls[["resample"]])
+print(entrenamiento_rls[["results"]])
+```
+
+```{r}
+peso_max <- max(datos_hombres$Weight, na.rm = TRUE)
+peso_min <- min(datos_hombres$Weight, na.rm = TRUE)
+rango <- peso_max - peso_min
+
+rmse_relativo <- (entrenamiento_rls[["results"]][["RMSE"]] / rango) * 100
+cat("\nRMSE relativo del modelo:", rmse_relativo, "%\n")
+```
+
+
+```{r}
+set.seed(5113)
+opt = options(warn = 1)
+fmla <- formula("Weight ~ Thigh.Girth + Chest.depth + Elbows.diameter + Chest.diameter")
+
+# Validación cruzada por pliegues con los 70 datos de entrenamiento
+entrenamiento_rlm <- train(fmla, data = muestra70, method = "lm",
+                       trControl = trainControl(method = "cv", number = 10))
+modelo_final_rlm <- entrenamiento_rlm[["finalModel"]]
+```
+
+```{r, echo=FALSE}
+cat("\nError estimado para el modelo:\n")
+print(entrenamiento_rlm[["resample"]])
+print(entrenamiento_rlm[["results"]])
+```
+
+```{r}
+peso_max <- max(datos_hombres$Weight, na.rm = TRUE)
+peso_min <- min(datos_hombres$Weight, na.rm = TRUE)
+rango <- peso_max - peso_min
+
+rmse_relativo <- (entrenamiento_rlm[["results"]][["RMSE"]] / rango) * 100
+cat("\nRMSE relativo del modelo:", rmse_relativo, "%\n")
+```
+Como se puede observar, el RLS tiene un RMSE relativo de 10.22% lo que indica el que tan grande es el error en base al rango de los datos. Por otro lado, el modelo RLM tiene un RMSE relativo de 5.10%, lo que indica que el error es menor en comparación con el modelo RLS. Esto sugiere que el modelo RLM es más preciso al predecir el peso en función de los predictores seleccionados. Por lo que se puede concluir que el poder predictivo del modelo RLM es mejor que el del modelo RLS.
+
+### Predicciones y evaluación de los modelos usando los 30 datos restantes
+Se usa el modelo entrenado con las 70 muestras para hacer predicciones sobre los 30 datos restantes y se evalúa el rendimiento de ambos modelos (RLS y RLM) utilizando las métricas RMSE, R-squared y MAE.
+
+```{r}
+# Predicciones y evaluación de los modelos usando los 30 datos restantes
+predicciones_rls <- predict(modelo_final_rls, newdata = restante)
+predicciones_rlm <- predict(modelo_final_rlm, newdata = restante)
+
+resultados_rls <- postResample(pred = predicciones_rls, obs = restante$Weight)
+resultados_rlm <- postResample(pred = predicciones_rlm, obs = restante$Weight)
+```
+
+```{r, echo=FALSE}
+cat("\nResultados del modelo RLS:\n")
+print(resultados_rls)
+
+cat("\nResultados del modelo RLM:\n")
+print(resultados_rlm)
+```
+Podemos ver que el modelo RLM no sólo tiene un RMSE menor a comparación con el modelo RLS, sino que también tiene un R-squared más alto y un MAE más bajo, lo que indica que el modelo RLM es más preciso en sus predicciones del peso en función de los predictores seleccionados.
+
+### Comparación usando repeticiones de los modelos RLS y RLM
+Se realiza el mismo proceso anteriormente 100 veces, tomando 100 muestras aleatorias de los datos originales, dividiendo en 70 para entrenamiento y 30 para prueba, y se evalúa el rendimiento de ambos modelos. Se guardan las métricas RMSE, R-squared y MAE para cada repetición y se calcula el promedio final de las métricas.
+
+```{r}
+
+set.seed(5113)
+n_reps <- 100
+
+# Mejores modelos
+mejor_modelo_rls <- NULL
+mejor_modelo_rlm <- NULL
+mejor_rmse_rls <- 9999
+mejor_rmse_rlm <- 9999
+
+
+# Crear data.frame para guardar resultados
+resultados <- data.frame(
+  RMSE_RLS = numeric(n_reps),
+  Rsq_RLS = numeric(n_reps),
+  MAE_RLS = numeric(n_reps),
+  RMSE_RLM = numeric(n_reps),
+  Rsq_RLM = numeric(n_reps),
+  MAE_RLM = numeric(n_reps)
+)
+
+for (i in 1:n_reps) {
+  # Tomar 100 muestras aleatorias de los datos originales
+  muestra100 <- datos_hombres_limpios[sample(nrow(datos_hombres_limpios), 100), ]
+  
+  # Dividir en 70 para entrenamiento y 30 para prueba
+  indices <- sample(1:100, 70)
+  muestra70 <- muestra100[indices, ]
+  restante <- muestra100[-indices, ]
+  
+  # Modelo RLS
+  fmla_rls <- formula("Weight ~ Thigh.Girth")
+  rls <- train(fmla_rls, data = muestra70, method = "lm",
+               trControl = trainControl(method = "cv", number = 10))
+  modelo_rls <- rls$finalModel
+  pred_rls <- predict(modelo_rls, newdata = restante)
+  eval_rls <- postResample(pred = pred_rls, obs = restante$Weight)
+  
+  # Guardar Mejor modelo RLS
+  if (eval_rls["RMSE"] < mejor_rmse_rls) {
+    mejor_rmse_rls <- eval_rls["RMSE"]
+    mejor_modelo_rls <- modelo_rls
+    idx_rls <- i
+  }
+  
+  # Modelo RLM
+  fmla_rlm <- formula("Weight ~ Thigh.Girth + Chest.depth + Elbows.diameter + Chest.diameter")
+  rlm <- train(fmla_rlm, data = muestra70, method = "lm",
+               trControl = trainControl(method = "cv", number = 10))
+  modelo_rlm <- rlm$finalModel
+  pred_rlm <- predict(modelo_rlm, newdata = restante)
+  eval_rlm <- postResample(pred = pred_rlm, obs = restante$Weight)
+  
+  # Guardar Mejor modelo RLM
+  if (eval_rlm["RMSE"] < mejor_rmse_rlm) {
+    mejor_rmse_rlm <- eval_rlm["RMSE"]
+    mejor_modelo_rlm <- modelo_rlm
+    idx_rlm <- i
+  }
+  
+  # Guardar métricas
+  resultados[i, ] <- c(eval_rls, eval_rlm)
+}
+```
+
+```{r, echo=FALSE}
+# Promedios finales
+cat("\nPromedios de las métricas tras", n_reps, "repeticiones:\n")
+cat("----------------------------------------------------------\n")
+
+cat("Modelo RLS:\n")
+print(colMeans(resultados[, c("RMSE_RLS", "Rsq_RLS", "MAE_RLS")]))
+
+cat("\nModelo RLM:\n")
+print(colMeans(resultados[, c("RMSE_RLM", "Rsq_RLM", "MAE_RLM")]))
+cat("-----------------------------------------------------------\n")
+
+# Mejores resultados de cada modelo
+cat("\nMejores resultados de predicción usando 30 valores restantes modelo RLS:\n")
+mejor_rls <- resultados[which.min(resultados$RMSE_RLS), ]
+print(mejor_rls[, c("RMSE_RLS", "Rsq_RLS", "MAE_RLS")])
+
+cat("\nMejores resultados de predicción usando 30 valores restantes modelo RLM:\n")
+mejor_rlm <- resultados[which.min(resultados$RMSE_RLM), ]
+print(mejor_rlm[, c("RMSE_RLM", "Rsq_RLM", "MAE_RLM")])
+
+# Mejores modelos obtenidos
+cat("\nMejor modelo RLS:\n")
+summary(mejor_modelo_rls)
+
+cat("\nMejor modelo RLM:\n")
+summary(mejor_modelo_rlm)
+```
+
+Como podemos ver, el modelo RLM presenta mejores valores promedio para las métricas RMSE, R-squared y MAE en comparación con el modelo RLS. Además de obtener muy buenos resultados en las mejores métricas de cada modelo, lo que indica que los predictores seleccionados mejoran el modelo considerablemente y nos permite obtener un modelo de regresión múltiple con un \(R^2\) de 0.9065 para el mejor modelo en la predicción y un \(R^2\) de 0.8532 del modelo ajustado sobre los datos de entrenamiento dado por la función summary(), lo que indica que el modelo es capaz de explicar una gran parte de la variabilidad del peso.
+
+También considerar el RMSE predictivo de 2.8474 para el modelo RLM, lo que es considerablemente menor que el RMSE obtenido en el segmento anterior.
+
+
+# Conclusión general
+
+En conclusión, el modelo de regresión lineal múltiple (RLM) es más efectivo que el modelo de regresión lineal simple (RLS) para predecir el peso en función de los predictores seleccionados, ya que ofrece un mejor rendimiento al evaluar las métricas elegidas. Y podemos ver que al utilizar un entrenamiento con repeticiones, podemos obtener un modelo más robusto y confiable, que nos permite evaluar con mayor seguridad el rendimiento de los modelos y su capacidad predictiva.
+
+# Bibliografia
+
+Morphological analysis of the human lower extremity based on relative muscle weight. (s/f). Brookbush Institute. Recuperado el 5 de junio de 2025, de https://brookbushinstitute.com/articles/morphological-analysis-human-lower-extremity-based-relative-muscle-weight?
+

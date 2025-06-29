@@ -1,0 +1,531 @@
+---
+title: "EP09"
+author: "Equipo 7"
+date: "2025-06-10"
+output: html_document
+---
+
+# Librerías usadas
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggpubr)
+library(car)
+```
+
+# Actividades
+
+Para este ejercicio usaremos los datos de medidas anatómicas recolectados por Heinz et al. (2003) que ya conocimos en el ejercicio práctico anterior (disponibles en el archivo "EP09 Datos.csv"). Como en este case se requiere de una variable dicotómica, vamos a realizar lo siguiente:
+
+1. El equipo crea la variable IMC (índice de masa corporal) como el peso de una persona (en kilogramos) dividida por el cuadrado de su estatura (en metros).
+
+2. Si bien esta variable se usa para clasificar a las personas en varias clases de estado nutricional (bajo peso, normal, sobrepeso, obesidad, obesidad mórbida), para efectos de este ejercicio, usaremos dos clases: sobrepeso (IMC ≥ 23,2) y no sobrepeso (IMC < 23,2).
+
+3. El equipo crea la variable dicotómica EN (estado nutricional) de acuerdo al valor de IMC de cada persona.
+
+Ahora podemos construir un modelo de regresión logística para predecir la variable EN, de acuerdo con las siguientes instrucciones:
+
+1. Asegurando reproducibilidad, seleccionar una muestra de 150 mujeres (si su n° de equipo es un número par) o 150 hombres (si su n° de equipo es impar), asegurando que la mitad tenga estado nutricional “sobrepeso” y la otra mitad “no sobrepeso” en cada caso. Dividir esta muestra en dos conjuntos: los datos de 100 personas (50 con EN “sobrepeso”) para utilizar en la construcción de los modelos y 50 personas (25 con EN “sobrepeso”) para poder evaluarlos.
+
+2. Recordar las ocho posibles variables predictoras seleccionadas de forma aleatoria en el ejercicio anterior.
+
+3. Seleccionar, de las otras variables, una que el equipo considere que podría ser útil para predecir la clase EN, justificando bien esta selección (idealmente con literatura).
+
+4. Usando el entorno R, construir un modelo de regresión logística con el predictor seleccionado en el paso anterior y utilizando de la muestra obtenida.
+
+5. Usando estas herramientas para la exploración de modelos del entorno R, buscar entre dos y cinco predictores de entre las variables seleccionadas al azar, recordadas en el punto 2, para agregar al modelo obtenido en el paso 4. Para esto:
+
+si su n° de equipo es 1 o 2: utilice selección hacia adelante, sin usar la función step().
+si su n° de equipo es 3 o 4: utilice eliminación hacia atrás, sin usar la función step().
+si su n° de equipo es 5, 6 o 7: utilice búsqueda escalonada usando la función step() (nuestro caso).
+si su n° de equipo es 8, 9 o 10: utilice búsqueda exhaustiva.
+
+6. Evaluar la confiabilidad de los modelos (i.e. que tengan un buen nivel de ajuste y son generalizables) y “arreglarlos” en caso de que tengan algún problema.
+
+7. Usando código estándar1, evaluar el poder predictivo de los modelos con los datos de las 50 personas que no se incluyeron en su construcción en términos de sensibilidad y especificidad.
+
+Inicialmente, para dar solución a estas preguntas se define una seed para asegurar la reproducibilidad de los resultados, y se cargan los datos desde el archivo "EP09 Datos.csv". Luego, se realiza la limpieza de los datos para convertir las columnas a tipo numérico y se calcula el IMC y el estado nutricional (EN) de cada persona. 
+
+```{r}
+#Cargar Datos
+set.seed(5113)
+
+datos <- read.csv("EP09 Datos.csv", header = TRUE, sep = ";")
+
+datos <- datos %>%
+  mutate(across(everything(), ~ as.numeric(gsub(",", ".", .))))
+
+# Ahora calcular Estatura en metros
+datos$Estatura_m <- datos$Height / 100
+
+# Calcular IMC
+datos$IMC <- datos$Weight / (datos$Estatura_m^2)
+
+datos$EN <- ifelse(datos$IMC >= 23.2, "sobrepeso", "no sobrepeso")
+
+```
+
+Una vez que tenemos los datos preparados, se procede a filtrar por género y crear la muestra de 150 personas, asegurando que haya un balance entre las clases de estado nutricional (EN). Luego, se divide esta muestra en dos conjuntos, uno para la construcción del modelo y otro para su evaluación.
+
+
+```{r}
+
+# Filtrar datos para hombres
+datos_genero <- datos %>% filter(Gender == 1)
+
+# Separar por estado nutricional
+sobrepeso <- datos_genero %>% filter(EN == "sobrepeso")
+no_sobrepeso <- datos_genero %>% filter(EN == "no sobrepeso")
+
+# Muestrear 75 de cada grupo para total 150
+muestra_sobrepeso <- sample_n(sobrepeso, 75)
+muestra_no_sobrepeso <- sample_n(no_sobrepeso, 75)
+
+muestra_150 <- bind_rows(muestra_sobrepeso, muestra_no_sobrepeso)
+
+# Dividir en construcción de 100 datos
+construccion_sobrepeso <- sample_n(muestra_sobrepeso, 50)
+construccion_no_sobrepeso <- sample_n(muestra_no_sobrepeso, 50)
+construccion <- bind_rows(construccion_sobrepeso, construccion_no_sobrepeso)
+construccion <- construccion[sample(nrow(construccion)), ]
+# Evaluacion de 50 datos
+evaluacion_sobrepeso <- setdiff(muestra_sobrepeso, construccion_sobrepeso)
+evaluacion_no_sobrepeso <- setdiff(muestra_no_sobrepeso, construccion_no_sobrepeso)
+evaluacion <- bind_rows(evaluacion_sobrepeso, evaluacion_no_sobrepeso)
+evaluacion <- evaluacion[sample(nrow(evaluacion)), ]
+
+# Mostrar tamaños para verificar
+cat("Muestra total:", nrow(muestra_150), "\n")
+cat("Construcción:", nrow(construccion), "\n")
+cat("Evaluación:", nrow(evaluacion), "\n")
+
+# Verificar balance
+table(construccion$EN)
+table(evaluacion$EN)
+
+
+```
+De experiencias anteriores se recuperan las variables predictoras utilizadas, para seguidamente excluir las variables de identificación y derivadas, y así quedarnos con nuevas variables que podrían ser útiles para el nuevo modelo.
+
+```{r}
+
+# Crear vector con nombres de predictores seleccionados
+predictores_seleccionados <- c(
+  "Biacromial.diameter",
+  "Wrists.diameter",
+  "Chest.depth",
+  "Chest.Girth",
+  "Hip.Girth",
+  "Elbows.diameter",
+  "Waist.Girth",
+  "Chest.diameter"
+)
+
+# Variables a excluir también (derivadas o de identificación)
+excluir_vars <- c(
+  predictores_seleccionados,
+  "Gender", "Weight", "Height", "Estatura_m", "IMC", "EN"
+)
+
+# Obtener nombres de variables no seleccionadas
+otros_predictores <- setdiff(names(datos), excluir_vars)
+
+# Mostrar resultado
+otros_predictores
+
+```
+A continuación, se genera un modelo con los nuevos predictores para así poder identificar cuál de ellos es el más adecuado para generar el nuevo modelo de regresión logística simple.
+
+```{r}
+construccion$EN <- factor(construccion$EN, levels = c("no sobrepeso", "sobrepeso"))
+
+RLogit_todos <- glm(EN ~ ., 
+               data = construccion[ , c(otros_predictores, "EN")], 
+               family = binomial)
+
+summary(RLogit_todos)
+
+```
+A partir de lo observado en este modelo, se escogió como predictor para el modelo logístico simple Calf.Maximum.Girth, ya que, según la investigación realizada, este predictor presenta una relación significativa con índices similares como el ASMI (Appendicular Skeletal Muscle Mass Index; Roriz et al., 2024), y se ha utilizado para evaluar y predecir el estado nutricional, específicamente la malnutrición (Miyahara et al., 2024).
+
+Con esta información, se procede a generar el modelo de regresión logística simple, utilizando Calf.Maximum.Girth como predictor:
+
+```{r}
+construccion$EN <- factor(construccion$EN, levels = c("no sobrepeso", "sobrepeso"))
+
+#Ajustar RLogitM de regresión logística
+RLogitS <- glm(EN ~ Calf.Maximum.Girth, 
+               data = construccion[ , c("Calf.Maximum.Girth", "EN")], 
+               family = binomial)
+summary(RLogitS)
+
+```
+
+Una vez terminada la confección de este modelo, se procede a realizar una búsqueda escalonada para encontrar generar un segundo modelo de regresión logística múltiple, esto utilizando la función `step()` del entorno R. Dicha función permite seleccionar automáticamente las variables más significativas para el modelo, basándose en criterios estadísticos como el AIC o el BIC:
+
+
+```{r}
+construccion$EN <- factor(construccion$EN, levels = c("no sobrepeso", "sobrepeso"))
+
+#Ajustar RLogitM de regresión logística
+RLogitS <- glm(EN ~ Calf.Maximum.Girth, 
+               data = construccion[ , c("Calf.Maximum.Girth", "EN")], 
+               family = binomial)
+summary(RLogitS)
+
+
+nulo <- glm(EN ~ 1, 
+               data = construccion, 
+               family = binomial(link = "logit"))
+
+completo <- glm(EN ~ ., 
+               data = construccion[ , c(predictores_seleccionados, "EN", "Calf.Maximum.Girth")], 
+               family = binomial(link = "logit"))
+
+opt <- options(digits = 2, width = 54)
+RLogitM <- step(nulo, scope = list(upper = completo), 
+               direction = "both", trace = 1)
+options(digits = opt[[1]], width = opt[[2]])
+
+cat("\nRLogitM final seleccionado:\n")
+print(coef(RLogitM))
+```
+Finalmente se obtuvo el siguiente modelo:
+
+```{r}
+summary(RLogitM)
+```
+
+## Bondad de Ajuste
+
+Es importante verificar que los modelos obtenidos tengan un buen ajuste a los datos, para lo cual se utilizará la función `anova()` con el test de razón de verosimilitudes (LRT) para comparar el modelo nulo con el modelo simple y luego el modelo simple con el modelo múltiple. Esto nos permitirá evaluar si la inclusión de las variables adicionales mejora significativamente el ajuste del modelo:
+
+
+```{r}
+ajuste1 <- anova(RLogitS, test = "LRT")
+ajuste2 <- anova(RLogitS,RLogitM, test = "LRT")
+
+cat("\nBondad de ajuste del modelo RLogitS:\n")
+print(ajuste1)
+cat("\nBondad de ajuste del modelo RLogitM:\n")
+print(ajuste2)
+
+
+```
+
+En primer lugar, el modelo simple (RLogitS), que considera únicamente la variable Calf.Maximum.Girth como predictor, muestra una reducción sustancial en la devianza residual con respecto al modelo nulo (de 138.6 a 88.7). Esta disminución es estadísticamente significativa (p < 0.05), lo cual indica que dicha variable contribuye de manera importante a explicar la presencia de sobrepeso en los individuos.
+
+Posteriormente, se construyó un modelo múltiple (RLogitM), donde se observa una reducción en la devianza residual (de 88.7 a 54.9) en comparación con el modelo anterior, con una diferencia de 33.8 unidades de devianza y un valor p altamente significativo (p < 0.05). Esto confirma que la inclusión de estas nuevas variables mejora significativamente el ajuste del modelo.
+
+
+## Confiabilidad
+
+Para evaluar la confiabilidad del modelo RLog Simple y Múltiple, se deben cumplir las siguientes condiciones:
+
+1) Debe existir una relacion lineal entre los predictores y la respuesta transformada.
+
+2) Los residuos deben ser independientes entre si.
+
+3) Multicolinealidad entre los predictores (Solo para RLM).
+
+4) Información incompleta, que se produce cuando no contamos con observaciones suficientes para todaslas posibles combinaciones de predictores, en especial para algún nivel de una variable categórica.
+
+5) Separacién perfecta, que ocurre cuando no hay superposicion entre las clases.
+
+6) Las estimaciones de los coeficientes del modelo no estén dominadas por casos influyentes.
+
+
+
+## Modelo RLogitS
+
+En primera instancia, se realizará un gráfico de residuos para verificar la primera condición:
+
+```{r}
+residualPlots(
+  RLogitS,
+  type = "rstandard",
+  id = list(method = "r", n = 3, cex = 0.7, location = "lr"),
+  col = "steelblue",
+  pch = 20,
+  col.quad = "red",fitted = FALSE
+)
+
+
+```
+Como se puede observar, el test de curvatura indica un p valor mayor a 0.05, lo cual sugiere que no hay evidencia de una relación no lineal entre los predictores y la respuesta transformada, cumpliendo así con la primera condición. En cuanto al gráfico, este no aporta evidencia significativa, por lo que para esta condición no fue tomado en consideración.
+
+Para  verificar la segunda condición, se realiza un test de Durbin-Watson, que evalúa la independencia de los residuos:
+
+```{r}
+durbinWatsonTest(RLogitS)
+```
+
+Se observa como el p-valor es mayor al nivel de significancia (0.05), por lo que no es posible rechazar la hipótesis nula de independencia de residuos.
+
+Para la condición de información incompleta, dado que se trabajó con una muestra balanceada (50 con “sobrepeso” y 50 con “no sobrepeso”) y que los predictores utilizados son numéricos, no se detectaron problemas evidentes de información incompleta o ausencia de combinaciones posibles para este modelo.
+
+Para observar si existe una separación perfecta entre las clases se realizará un gráfico de los valores de Calf.Maximum.Girth, coloreando los puntos según la clase EN (estado nutricional). Una separación perfecta indicaría que el modelo podría ser demasiado ajustado a los datos y no generalizar bien a nuevos casos:
+
+
+```{r}
+# Crear dataframe para graficar
+df_plot <- construccion %>%
+  select(Calf.Maximum.Girth, EN) %>%
+  mutate(Id = 1:n())
+
+# Graficar los valores de Calf.Maximum.Girth con color según la clase EN
+p <- ggscatter(df_plot, 
+               x = "Id", 
+               y = "Calf.Maximum.Girth", 
+               color = "EN", 
+               palette = c("firebrick", "darkgreen")) +
+  theme_minimal() +
+  geom_hline(yintercept = median(df_plot$Calf.Maximum.Girth), 
+             linetype = "dashed", color = "steelblue") +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  labs(y = "Calf Maximum Girth")
+
+# Mostrar el gráfico
+print(p)
+```
+
+Como se puede observar, no existe separación perfecta, ya que los puntos de la clase "sobrepeso" y "no sobrepeso" se superponen en el eje de Calf.Maximum.Girth. Esto indica que no hay un valor de Calf.Maximum.Girth que separe completamente las dos clases, lo cual es una condición importante para la validez del modelo de regresión logística.
+
+Ahora se procede a comprobar si las estimaciones de los coeficientes del modelo no están dominadas por casos influyentes, para lo cual se utiliza el gráfico de influencia:
+
+```{r}
+# Gráfico de influencia (residuos estudentizados, leverage y distancia de Cook)
+influencePlot(RLogitS, 
+              id = list(method = "r", n = 3), 
+              main = "Influence Plot del RLogitM final")
+
+```
+
+Aunque hay algunas observaciones con residuos relativamente grandes, no hay evidencia significativa de que alguna de ellas tenga una influencia excesiva sobre el modelo, por lo que se considera que este modelo cumple con la condición de estimaciones de coeficientes no dominadas por casos influyentes.
+
+### Conclusión del modelo RLogitS sobre la confiabilidad
+
+Al cumplir con las condiciones de confiabilidad, se concluye que el modelo RLogitS es confiable para predecir el estado nutricional de los hombres en la muestra, utilizando Calf.Maximum.Girth como predictor. Además, no se observan problemas de separación perfecta ni de influencia excesiva de casos atípicos, lo que refuerza la validez del modelo.
+
+
+## Modelo RLogitM
+
+Para comprobar la primera condición, se realiza un gráfico de residuos, al igual que se hacia para RLM:
+
+```{r}
+residualPlots(
+  RLogitM,
+  type = "rstandard",
+  id = list(method = "r", n = 3, cex = 0.7, location = "lr"),
+  col = "steelblue",
+  pch = 20,
+  col.quad = "red",fitted = FALSE
+)
+
+
+```
+
+Como se puede observar en los gráficos de residuos, se observa que existe una relacion aparentemente lineal, donde el test de curvatura, arroja un p valor mayor a 0.05, lo cual puede corroborar lo anterior.
+
+Para  verificar la segunda condición, se realiza un test de durbin-Watson, que evalúa la independencia de los residuos:
+
+```{r}
+durbinWatsonTest(RLogitM)
+```
+
+Para de test de independencia, se observa que el p valor es mayor a 0.05, por lo que no se rechaza la hipótesis nula de independencia de residuos.
+
+Para verificar la condición de multicolinealidad, se utiliza el factor de inflación de la varianza (VIF) para cada predictor del modelo RLog, donde un VIF entre 1 y 5 indica una presencia moderada de multicolinealidad, mientras que un VIF mayor a 5 indica una alta multicolinealidad. Si el VIF es mayor a 10, se considera que hay un problema grave de multicolinealidad.
+
+```{r}
+vif(RLogitM)
+```
+Los valores de VIF para los predictores Waist.Girth, Calf.Maximum.Girth, Biacromial.diameter, Chest.diameter se encuentran entre 1 y 5, lo que indica una presencia moderada de multicolinealidad, pero no es preocupante.
+
+Para la condición de información incompleta, de forma similar a como se explicó en el modelo anterior, se tienen 50 observaciones para los dos niveles de la variable categórica EN, lo que indica que con esa cantidad de observaciones se podría conseguir un modelo confiable.
+
+Al revisar el resumen del modelo obtenido, no se evidencia separación perfecta. Todos los coeficientes presentan errores estándar y razonables, sin advertencias sobre probabilidades ajustadas cercanas a 0 o 1. Además, el modelo converge correctamente en 7 iteraciones, y los valores p indican significancia estadística para la mayoría de los predictores. Todo esto sugiere que el modelo es estable y que no existe separación perfecta, cumpliendo así con esta condición clave para la validez del análisis.
+
+Finalmente, se evalúa la presencia de valores atípicos e influyentes, utilizando el gráfico de influencia:
+
+```{r}
+# Gráfico de influencia
+influencePlot(RLogitM, 
+              id = list(method = "r", n = 3), 
+              main = "Influence Plot del RLogitM final")
+
+```
+
+
+El gráfico de influencia de valores atípicos, se identificaron tres observaciones que podrían estar influyendo en el modelo ajustado. Se decidió evaluar el impacto específico de una de las observaciones influyentes detectadas anteriormente, la cual es la observación 33 con un CookD de 0.23 (la más alta de los tres), por lo que se elimina del modelo anterior para ver si su eliminación afecta significativamente el modelo:
+
+```{r}
+
+construccion_sin33 <- construccion[!rownames(construccion) %in% "33", ]
+
+modelo_sin33 <- glm(EN ~ Waist.Girth + Calf.Maximum.Girth + Biacromial.diameter + Chest.diameter, 
+                    data = construccion_sin33, 
+                    family = binomial)
+
+crPlots(modelo_sin33,
+        ylim = c(-5, 5),
+        col = "steelblue",
+        pch = 20,
+        col.lines = c("red", "steelblue"),
+        smooth = list(smoother = loessLine, span = 1),
+        id = list(method = "r", n = 8, cex = 0.7, location = "lr"))
+```
+Al eliminar dicha observación, se observa que el comportamiento general del modelo no cambia significativamente y tampoco se evidencia un patrón de apalancamiento relevante. Esto sugiere que, si bien la observación 33 tenía cierta influencia (según el gráfico de Cook’s Distance), el sacar esta observación del modelo no altera al mismo.
+
+### Conclusión del modelo RLogitM sobre la confiabilidad
+
+Al evaluarse sus condiciones de confiabilidad el modelo demostró un comportamiento aceptable, siendo más robusto y generalizable que su contraparte simple. Por lo tanto, se considera que el modelo RLogitM es confiable para predecir el estado nutricional de los hombres en la muestra, utilizando múltiples predictores.
+
+
+# Entrenamiento y prueba del modelo RLogitS
+
+A continación, se procederá a entrenar y evaluar tanto el modelo RLogitS como el modelo RLogitM utilizando los datos de entrenamiento y prueba. Para lo cual, se utilizarán métricas de exactitud, sensibilidad y especificidad para evaluar el rendimiento de ambos modelos.
+
+```{r}
+# Paso 1: Definir umbral
+umbral <- 0.5
+
+# Paso 2: Preparar niveles
+niveles_clase <- levels(RLogitS[["data"]]$EN)  # "no sobrepeso", "sobrepeso"
+niveles_ordenados <- rev(niveles_clase)  # Asume: "sobrepeso" es positivo
+
+# Paso 3: Predicciones sobre entrenamiento
+probs_train <- fitted(RLogitS)
+preds_train <- ifelse(probs_train < umbral, "no sobrepeso", "sobrepeso")
+preds_train <- factor(preds_train, levels = niveles_ordenados)
+obs_train <- factor(RLogitS[["data"]]$EN, levels = niveles_ordenados)
+
+# Paso 4: Predicciones sobre prueba
+probs_test <- predict(RLogitS, newdata = evaluacion, type = "response")
+preds_test <- ifelse(probs_test < umbral, "no sobrepeso", "sobrepeso")
+preds_test <- factor(preds_test, levels = niveles_ordenados)
+obs_test <- factor(evaluacion$EN, levels = niveles_ordenados)
+
+# Paso 5: Matrices de confusión
+conf_train <- table(Predicho = preds_train, Observado = obs_train)
+conf_test <- table(Predicho = preds_test, Observado = obs_test)
+
+cat("Matriz de confusión en entrenamiento:\n")
+print(conf_train)
+cat("\nMatriz de confusión en prueba:\n")
+print(conf_test)
+
+# Paso 6: Métricas para entrenamiento
+exa_train <- sum(diag(conf_train)) / sum(conf_train)
+sen_train <- conf_train["sobrepeso", "sobrepeso"] / sum(conf_train[, "sobrepeso"])
+esp_train <- conf_train["no sobrepeso", "no sobrepeso"] / sum(conf_train[, "no sobrepeso"])
+
+# Paso 7: Métricas para prueba
+exa_test <- sum(diag(conf_test)) / sum(conf_test)
+sen_test <- conf_test["sobrepeso", "sobrepeso"] / sum(conf_test[, "sobrepeso"])
+esp_test <- conf_test["no sobrepeso", "no sobrepeso"] / sum(conf_test[, "no sobrepeso"])
+
+
+```
+```{r, echo=FALSE}
+# Paso 8: Mostrar resultados
+cat("\n>> Rendimiento del RLogitM en entrenamiento:\n")
+cat(sprintf("    Exactitud: %.2f\n", exa_train))
+cat(sprintf(" Sensibilidad: %.2f\n", sen_train))
+cat(sprintf("Especificidad: %.2f\n", esp_train))
+
+cat("\n>> Rendimiento del RLogitM en prueba:\n")
+cat(sprintf("    Exactitud: %.2f\n", exa_test))
+cat(sprintf(" Sensibilidad: %.2f\n", sen_test))
+cat(sprintf("Especificidad: %.2f\n", esp_test))
+
+```
+
+De acuerdo a las métricas, podemos ver que el modelo sufre una disminución en su rendimiento al ser evaluado con datos de prueba, la cuál no es especialmente significativa, ya que se mantiene sobre el 70% de exactitud, sensibilidad y especificidad. Esto indica que el modelo es capaz de predecir de buena manera datos no vistos, y que tiene una buena calidad predictiva al utilizar el predictor "Calf.Maximum.Girth" para predecir el estado nutricional de los hombres en la muestra.
+
+
+
+# Entrenamiento y prueba del modelo RLogitM
+
+
+```{r}
+# Paso 1: Definir umbral
+umbral <- 0.5
+
+# Paso 2: Preparar niveles
+niveles_clase <- levels(RLogitM[["data"]]$EN)  # "no sobrepeso", "sobrepeso"
+niveles_ordenados <- rev(niveles_clase)  # Asume: "sobrepeso" es positivo
+
+# Paso 3: Predicciones sobre entrenamiento
+probs_train <- fitted(RLogitM)
+preds_train <- ifelse(probs_train < umbral, "no sobrepeso", "sobrepeso")
+preds_train <- factor(preds_train, levels = niveles_ordenados)
+obs_train <- factor(RLogitM[["data"]]$EN, levels = niveles_ordenados)
+
+# Paso 4: Predicciones sobre prueba
+probs_test <- predict(RLogitM, newdata = evaluacion, type = "response")
+preds_test <- ifelse(probs_test < umbral, "no sobrepeso", "sobrepeso")
+preds_test <- factor(preds_test, levels = niveles_ordenados)
+obs_test <- factor(evaluacion$EN, levels = niveles_ordenados)
+
+# Paso 5: Matrices de confusión
+conf_train <- table(Predicho = preds_train, Observado = obs_train)
+conf_test <- table(Predicho = preds_test, Observado = obs_test)
+
+cat("Matriz de confusión en entrenamiento:\n")
+print(conf_train)
+cat("\nMatriz de confusión en prueba:\n")
+print(conf_test)
+
+# Paso 6: Métricas para entrenamiento
+exa_train <- sum(diag(conf_train)) / sum(conf_train)
+sen_train <- conf_train["sobrepeso", "sobrepeso"] / sum(conf_train[, "sobrepeso"])
+esp_train <- conf_train["no sobrepeso", "no sobrepeso"] / sum(conf_train[, "no sobrepeso"])
+
+# Paso 7: Métricas para prueba
+exa_test <- sum(diag(conf_test)) / sum(conf_test)
+sen_test <- conf_test["sobrepeso", "sobrepeso"] / sum(conf_test[, "sobrepeso"])
+esp_test <- conf_test["no sobrepeso", "no sobrepeso"] / sum(conf_test[, "no sobrepeso"])
+
+```
+
+```{r, echo=FALSE}
+# Paso 8: Mostrar resultados
+cat("\n>> Rendimiento del RLogitM en entrenamiento:\n")
+cat(sprintf("    Exactitud: %.2f\n", exa_train))
+cat(sprintf(" Sensibilidad: %.2f\n", sen_train))
+cat(sprintf("Especificidad: %.2f\n", esp_train))
+
+cat("\n>> Rendimiento del RLogitM en prueba:\n")
+cat(sprintf("    Exactitud: %.2f\n", exa_test))
+cat(sprintf(" Sensibilidad: %.2f\n", sen_test))
+cat(sprintf("Especificidad: %.2f\n", esp_test))
+
+
+```
+
+
+Como resultado, se obtuvo valores de sensibilidad de 0.84 y de especificidad de 0.68, por lo que demuestra un buen rendimiento en la detección de casos positivos. No obstante, la especificidad del 68% sugiere que el modelo tuvo un desempeño más limitado al identificar correctamente a las personas que no presentan sobrepeso, generando una proporción moderada de falsos positivos.
+
+Por otra parte para los resultados obtenidos en el conjunto de entrenamiento (sensibilidad de 0.88 y especificidad de 0.86), se observa una disminución en ambas métricas al aplicar el modelo a datos no vistos previamente, reflejando una pérdida de capacidad predictiva al generalizar a nuevos individuos, aunque los niveles alcanzados pueden ser considerados como aceptables.
+
+En resumen, al usar los datos de entrenamiento el modelo de regresión logística múltiple logra mejores valores en las métricas consideradas que el simple. Al evaluar los datos de prueba, se puede observar que en Exactitud y Sensibilidad el modelo múltiple logra un mejor rendimiento que el simple, mientras que en Especificidad el modelo simple logra un mejor rendimiento.
+
+
+# Conclusión
+
+A lo largo de este análisis se ajustaron y evaluaron modelos de regresión logística simple y múltiple con el objetivo de predecir el estado nutricional en hombres, utilizando variables relacionadas con medidas antropométricas para los predictores. Ambos modelos fueron sometidos a pruebas rigurosas para verificar el cumplimiento de los supuestos fundamentales del modelo logístico, tales como la independencia de residuos, ausencia de multicolinealidad, inexistencia de separación perfecta y control de casos influyentes, obteniendo como resultado que ambos modelos cumplen adecuadamente con dichos criterios. Posteriormente, al entrenar y probar ambos modelos, se observó que el modelo múltiple presentó un mejor desempeño general en exactitud y sensibilidad tanto en los datos de entrenamiento como de prueba. Sin embargo, el modelo simple mostró una especificidad levemente superior al evaluar datos nuevos, lo cual es indicativo de una mejor identificación de los casos negativos.
+
+En conjunto, podemos decir que el modelo de regresión logística múltiple ofrece una mejor capacidad predictiva global, puesto que captura de mejor forma la relación entre múltiples predictores y el estado nutricional. No obstante, ambos modelos demostraron ser útiles y estadísticamente válidos, aportando herramientas confiables para el análisis y predicción del sobrepeso en la población evaluada.
+
+
+# Referencias bibliográficas
+
+Miyahara, S., Maeda, K., Yasuda, A., Satake, S., & Arai, H. (2024). The potential of body mass index-adjusted calf circumference as a proxy for low muscle mass in the global leadership initiative on malnutrition criteria. Clinical nutrition (Edinburgh, Scotland), 43(12), 225–230. https://doi.org/10.1016/j.clnu.2024.10.025
+
+Roriz, A. K. C., Costa, T. L., Alves, A. P., Oliveira, T. S., Silva, J. B., & Feitosa, C. A. (2024). Calf circumference as an indicator of sarcopenia and frailty in older adults: A systematic review and meta-analysis. Aging Clinical and Experimental Research. https://doi.org/10.1007/s40520-024-02694-x
+
+
+
