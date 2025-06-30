@@ -1,0 +1,295 @@
+---
+title: "EP08-respuesta-equipo-8"
+author: "RODRIGO"
+date: "2025-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+PREGUNTA 1:
+
+Funciones a utilizar:
+```{r}
+
+permutar<-function(i,m1,m2){
+  n1<-length(m1)
+  combinacion<-c(m1,m2)
+  n<-length(combinacion)
+  permutacion<-sample(combinacion,n,replace=FALSE)
+  nueva1<-permutacion[1:n1]
+  nueva2<-permutacion[(n1+1):n]
+  return(list(nueva1,nueva2))
+}
+
+calculardif<-function(muestras){
+  m1<-muestras[[1]]
+  m2<-muestras[[2]]
+  exito1<-sum(m1==1)
+  exito2<-sum(m2==1)
+  largo1<-length(m1)
+  largo2<-length(m2)
+  prob1<-exito1/largo1
+  prob2<-exito2/largo2
+  diferencia<- prob1-prob2
+  return(diferencia)
+}
+
+```
+Se plantea la pregunta de:
+Dependiendo del nivel educacional alcanzado, se puede observar una mayor frecuencia de problemas o dificultades al concentrarse?
+Vale destacar que se limitara a observaciones de personas menores de 30 años
+Para esto, se plantea las siguientes hipótesis:
+
+H0: En ambos niveles de educación se encuentra la misma frecuencia de dificultades de concentración.
+
+Ha: Existe una diferencia en la frecuencia de dificultades de concentración entre ambos niveles educativos.
+
+```{r}
+library(dplyr)
+set.seed(123)
+permutaciones<-5999
+n<-125
+datos_sin_filtrar <- read.csv("EP08 Datos CASEN 2017.csv")
+datosmetro<-datos_sin_filtrar %>% filter(region=="Región Metropolitana de Santiago")
+#Filtrar los datos a las observaciones menores de 30 años
+datosmenor30<-datosmetro %>% filter(edad<=30)
+
+```
+Para esto, se utilizarán las siguientes variables:
+
+
+h10d:¿Tiene dificultad para recordar o para concentrarse?.
+Esta pregunta tiene las siguientes respuestas:
+
+
+1 No, sin dificultad 
+
+
+2 Sí, algo de dificultad 
+
+
+3 Sí, mucha dificultad 
+
+
+4 No puede hacerlo 
+
+
+Los cuales se resumirán en no hay dificultad (1) y si hay dificultad (2+3+4)
+
+
+e6a: ¿Cuál fue el nivel educacional más alto alcanzado o el nivel educacional actual?
+Tomando los valores siguientes valores como la suma de educación básica y media: 
+
+
+6) Primaria o Preparatoria
+(Sistema antiguo).
+
+
+7) Educación Básica.
+
+
+8) Humanidades (Sistema
+Antiguo).
+
+
+9) Educación Media Científico Humanista.
+
+
+10) Técnica, Comercial, Industrial o Normalista (Sistema Antiguo).
+
+
+11) Educación Media Técnica
+Profesional.
+
+
+Y los siguientes como educación superior:
+
+
+12) Técnico Nivel Superior
+Incompleto (Carreras 1 a 3 años)
+
+
+13) Técnico Nivel Superior
+Completo (Carreras 1 a 3 años)
+
+
+14) Profesional Incompleto
+(Carreras 4 o más años)
+
+
+15) Profesional Completo
+(Carreras 4 o más años)
+En el siguiente bloque se filtrarán los datos
+```{r}
+
+#Listas para filtros y reemplazos
+
+reemplazofallo<-c("No, sin dificultad")
+reemplazoacierto<-c("No puede hacerlo","Sí, mucha dificultad","Sí, algo de dificultad")
+
+nosuperior<-c("Primaria o Preparatoria (Sistema antiguo)","Educación Básica","Humanidades (Sistema Antiguo)","Educación Media Científico-Humanista","Técnica, Comercial, Industrial o Normalista (Sistema Antiguo"
+,"Educación Media Técnica Profesional")
+
+superior<-c("Técnico Nivel Superior Incompleto (Carreras 1 a 3 años)","Técnico Nivel Superior Completo (Carreras 1 a 3 años)","Profesional Incompleto (Carreras 4  o más años)",
+                                                       "Profesional Completo (Carreras 4 o más años)")
+
+#Filtro para las observaciones que se buscan investigar segun su nivel educativo
+datoseducacion<-datosmenor30 %>% filter(e6a %in% c("Primaria o Preparatoria (Sistema antiguo)","Educación Básica","Humanidades (Sistema Antiguo)","Educación Media Científico-Humanista","Técnica, Comercial, Industrial o Normalista (Sistema Antiguo"
+,"Educación Media Técnica Profesional","Técnico Nivel Superior Incompleto (Carreras 1 a 3 años)","Técnico Nivel Superior Completo (Carreras 1 a 3 años)","Profesional Incompleto (Carreras 4  o más años)",
+                                                       "Profesional Completo (Carreras 4 o más años)")) %>% select(e6a,h10d)
+#Filtrar los datos sin respuesta
+datostotal<-datoseducacion %>% filter(h10d!="No sabe/no responde")
+
+#simplificacion de variable h10d
+datostotal <- datostotal %>% 
+  mutate(h10d = ifelse(h10d == "No, sin dificultad", 0, h10d))
+datostotal <- datostotal %>% 
+  mutate(h10d = ifelse(h10d !=0, 1, h10d))
+
+#simplificacion de los niveles educativos
+datostotal<-datostotal %>% 
+  mutate(e6a = ifelse(e6a %in% nosuperior, "NS", e6a))
+datostotal<-datostotal %>% 
+  mutate(e6a = ifelse(e6a != "NS", "S", e6a))
+
+
+
+
+```
+
+
+Ahora se obtendrá las proporciones/probabilidades de éxito de la encuesta:
+```{r}
+# se obtienen las muestras 
+muestratotal<-datostotal[sample(nrow(datostotal), 125), ]
+muestrasuperior<-muestratotal %>% filter(e6a == "S")
+muestranosuperior<-muestratotal %>% filter(e6a == "NS")
+#se obtiene el numero de exitos para encontrar la frecuencia observada
+exitos<-sum(muestrasuperior$h10d==1)
+
+#se hacen las permutaciones y se obtiene la distribucion de las diferencias
+listaperm<-lapply(1:permutaciones,permutar,muestrasuperior$h10d,muestranosuperior$h10d)
+distribucion<-sapply(listaperm,calculardif)
+#se calcula el valor observado
+observado<-calculardif(list(muestrasuperior$h10d,muestranosuperior$h10d))
+
+#se obtienen los valores necesarios para obtener el p value
+numerador<-sum(abs(distribucion)>abs(observado)) + 1
+denominador<-permutaciones +1
+valorp<-numerador/denominador
+print(valorp)
+
+
+
+```
+
+Se obtiene un p-value de 0.3543333, mayor a 0.05 por lo que no se tiene suficiente evidencia para rechazar la hipótesis nula de que en ambos niveles educativos se encuentra la misma frecuencia de dificultades de concentración
+
+
+
+PREGUNTA 2:
+
+
+Se plantea la siguiente pregunta:
+¿El promedio de personas por hogar es parecido entre regiones cercanas?
+Para esto se seleccionaron 3 regiones:
+
+
+-Región de Valparaíso
+
+
+-Región Metropolitana
+
+
+-Región de O'Higgins
+
+```{r, message=FALSE, warning=FALSE}
+# Cargar paquetes necesarios
+library(dplyr)
+library(ggpubr)
+library(boot)
+library(simpleboot)
+library(ez)
+library(ggplot2)
+```
+
+Funciones:
+```{r}
+aplicaranova<-function(i1,i2,i3){
+  df<-bind_rows(i1,i2,i3)
+  resultado<-ezANOVA(df,dv=numper,wid=id,between=region,return_aov = TRUE)
+  return(resultado$ANOVA$F)
+}
+
+
+```
+
+```{r}
+#Carga de datos
+datos <- read.csv("EP08 Datos CASEN 2017.csv")
+```
+
+```{r}
+#Variables
+set.seed(123)
+n<-250
+alfa<-0.05
+B<-500
+
+#Filtrado de datos
+datos_filtrados<- datos %>% filter(region=="Región Metropolitana de Santiago" |
+                                    region=="Región de Valparaíso" |
+                                    region=="Región del Libertador Gral. Bernardo OHiggins" ) %>%
+  select(region, numper)
+datos_filtrados<- datos_filtrados %>% filter(!is.na(numper))
+datos_filtrados$region<-as.factor(datos_filtrados$region)
+datos_filtrados$id <- 1:nrow(datos_filtrados)
+
+
+
+#dataframes por region
+
+datosmetro<-datos_filtrados %>% filter(region=="Región Metropolitana de Santiago")
+
+
+datosvalpo<-datos_filtrados %>% filter(region=="Región de Valparaíso")
+
+datosohiggins<-datos_filtrados %>% filter(region=="Región del Libertador Gral. Bernardo OHiggins")
+sample1<-datosvalpo[sample(nrow(datosvalpo), n, replace = TRUE),]
+sample2<-datosmetro[sample(nrow(datosmetro), n, replace = TRUE),]
+sample3<-datosohiggins[sample(nrow(datosohiggins), n, replace = TRUE),]
+#f value observado
+fobs<-aplicaranova(sample1,sample2,sample3)
+
+
+bootsvalpo <- lapply(1:B, function(i) {
+  datosvalpo[sample(nrow(datosvalpo), n, replace = TRUE), ]
+})
+bootsmetro <- lapply(1:B, function(i) {
+  datosmetro[sample(nrow(datosmetro), n, replace = TRUE), ]
+})
+bootsohiggins <- lapply(1:B, function(i) {
+  datosohiggins[sample(nrow(datosohiggins), n, replace = TRUE), ]
+})
+
+```
+
+```{r message = FALSE,warning = FALSE, results='hide'}
+fboots<-sapply(1:B, function(i) aplicaranova(bootsvalpo[[i]],bootsmetro[[i]],bootsohiggins[[i]]))
+
+```
+
+Para obtener el p-value:
+```{r}
+p_value <- (sum(fboots >= fobs) + 1) / (B + 1)
+print(p_value)
+
+```
+
+De lo anterior se obtiene un P-Value de 0.465, mayor que 0.05, por lo tanto, no se tiene suficiente evidencia para rechazar la hipótesis nula, concluyendo que, con un 95% de confianza, las casas de las 3 regiones seleccionadas tienen un promedio similar de habitantes.
+
+
+De todas maneras se ejecutará un análisis post hoc (por temas de tiempo no se hará)
